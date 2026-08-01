@@ -6,7 +6,7 @@ To train Tydra {4HT}, run:
 
 ​```
 python3 train_{4HT}.py
-​```
+​```. 
 
 Other Tydra variants can be trained analogously.
 
