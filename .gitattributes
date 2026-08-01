@@ -1,0 +1,8 @@
+tabpfn/models_diff/callback_hybrid_8_layers_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/callback_tabpfn_hydra_x4_hybrid_8_layers_512e_lr0p0001_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/callback_hydra2_tabpfn4_hydra2_hybrid_8_layers_512e_lr0p0001_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/callback_hydra1_tabpfn6_hydra1_hybrid_8_layers_512e_lr0p0001_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/callback_tabpfn2_hydra4_tabpfn2_hybrid_8_layers_512e_lr0p0001_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/callback_tabpfn1_hydra6_tabpfn1_hybrid_8_layers_512e_lr0p0001_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/callback_pure_hydra_9_layers_latest.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/hydra_small.cpkt filter=lfs diff=lfs merge=lfs -text
