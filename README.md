@@ -1,5 +1,17 @@
 This repository provides training and evaluation pipelines for Tydra, the first hybrid model for tabular data.
 
+
+## Getting started
+
+A Dockerfile is provided, along with a `setup.sh` script in the repository root, to build an Ubuntu-based Docker container with all dependencies installed.
+
+To launch the experiments, we used the following combination of dependencies:
+
+- Python == 3.8.10
+- CUDA == 11.8
+- PyTorch == 2.4.1
+
+
 ## Training
 
 To train Tydra {4HT}, run:
