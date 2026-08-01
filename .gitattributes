@@ -6,3 +6,4 @@ tabpfn/models_diff/callback_tabpfn2_hydra4_tabpfn2_hybrid_8_layers_512e_lr0p0001
 tabpfn/models_diff/callback_tabpfn1_hydra6_tabpfn1_hybrid_8_layers_512e_lr0p0001_latest.cpkt filter=lfs diff=lfs merge=lfs -text
 tabpfn/models_diff/callback_pure_hydra_9_layers_latest.cpkt filter=lfs diff=lfs merge=lfs -text
 tabpfn/models_diff/hydra_small.cpkt filter=lfs diff=lfs merge=lfs -text
+tabpfn/models_diff/tabpfn_transformer_model.cpkt filter=lfs diff=lfs merge=lfs -text
