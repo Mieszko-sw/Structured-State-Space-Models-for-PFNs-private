@@ -13,8 +13,18 @@ it does not yet add LoopFormer time/step-size modulation inside the block.
 import os
 import sys
 import re
+import random
 
-LOG_FILE_PATH = "elastic_looped_transformer_3physical_core6x.log"
+TRAIN_SEED_ENV = os.environ.get("TRAIN_SEED")
+if TRAIN_SEED_ENV is not None:
+    # Required by deterministic CUDA matrix multiplication on CUDA >= 10.2.
+    # This must be set before importing torch.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+LOG_FILE_PATH = os.environ.get(
+    "TRAIN_LOG_FILE_PATH",
+    "elastic_looped_transformer_3physical_core6x.log",
+)
 
 class Tee:
     def __init__(self, *streams):
@@ -58,6 +68,20 @@ from tabpfn.priors.utils import uniform_int_sampler_f
 
 from evaluation_helper import EvalHelper
 
+if TRAIN_SEED_ENV is not None:
+    TRAIN_SEED = int(TRAIN_SEED_ENV)
+    random.seed(TRAIN_SEED)
+    np.random.seed(TRAIN_SEED)
+    torch.manual_seed(TRAIN_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(TRAIN_SEED)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
+    print(f"Using fixed training seed {TRAIN_SEED} with deterministic algorithms.")
+else:
+    TRAIN_SEED = None
+
 #------------------------------------------------------------------------------------------------
 #                                       END IMPORTS
 #------------------------------------------------------------------------------------------------
@@ -83,6 +107,9 @@ json_file_path = "tabpfn_original_config.json"
 #------------------------------------------------------------------------------------------------
 
 with open(json_file_path, "r") as f: config = json.load(f)
+
+if TRAIN_SEED is not None:
+    config["seed"] = TRAIN_SEED
     
 # Fill in stuff that could not be loaded properly into the config.json
 uniform_int_sampler_f = (lambda a, b : lambda : round(np.random.uniform(a, b)))
@@ -105,7 +132,10 @@ config["num_features_used"] = uniform_int_sampler_f(1, max_features)
 #------------------------------------------------------------------------------------------------
 
 model_type = "looped_transformer"
-checkpoint_model_name = "elastic_looped_transformer_3physical_core6x"
+checkpoint_model_name = os.environ.get(
+    "CHECKPOINT_MODEL_NAME",
+    "elastic_looped_transformer_3physical_core6x",
+)
 
 config['batch_size'] = 64 
 config['emsize'] = 512 
@@ -263,7 +293,9 @@ wandb_run = wandb.init(
 
 run_url = wandb_run.url or wandb_run.dir
 print(f"WANDB_RUN_URL={run_url}", flush=True)
-Path("wandb_run_url.txt").write_text(f"{run_url}\n")
+Path(
+    os.environ.get("WANDB_RUN_URL_FILE", "wandb_run_url.txt")
+).write_text(f"{run_url}\n")
 
 #------------------------------------------------------------------------------------------------
 #                                         END WANDB

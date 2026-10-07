@@ -3,6 +3,8 @@ import tabpfn.encoders as encoders
 
 from tabpfn.transformer import TransformerModel
 from tabpfn.looped_transformer import LoopedTransformerModel
+from tabpfn.gated_recurrent_transformer import GatedRecurrentTransformerModel
+from tabpfn.loopformer import LoopFormerModel
 from tabpfn.mamba import MambaModel
 from tabpfn.hydra import HydraModel
 from tabpfn.hybrid import HybridHydraTransformerModel
@@ -67,21 +69,71 @@ def load_model_only_inference(path, filename, device, model_name=""):
             full_attention=config_sample.get('enable_transformer_full_attn', False)
             )
     elif model_name == "looped_transformer":
-        model = LoopedTransformerModel(
-            encoder,
-            n_out,
-            config_sample['emsize'],
-            config_sample['nhead'],
-            nhid,
-            config_sample['nlayers'],
-            y_encoder=y_encoder_generator(1, config_sample['emsize']),
-            dropout=config_sample['dropout'],
-            efficient_eval_masking=config_sample['efficient_eval_masking'],
-            full_attention=config_sample.get('enable_transformer_full_attn', False),
-            looped_warmup_layers=config_sample.get('looped_warmup_layers', 1),
-            looped_core_layers=config_sample.get('looped_core_layers', 2),
-            looped_exit_layers=config_sample.get('looped_exit_layers', 1),
-            looped_core_repeat_pattern=config_sample.get('looped_core_repeat_pattern'),
+        if config_sample.get("gated_recurrent_transformer", False):
+            model = GatedRecurrentTransformerModel(
+                encoder,
+                n_out,
+                config_sample["emsize"],
+                config_sample["nhead"],
+                nhid,
+                config_sample["nlayers"],
+                y_encoder=y_encoder_generator(1, config_sample["emsize"]),
+                dropout=config_sample["dropout"],
+                efficient_eval_masking=config_sample["efficient_eval_masking"],
+                full_attention=config_sample.get("enable_transformer_full_attn", False),
+                gated_warmup_layers=config_sample.get("gated_warmup_layers", 1),
+                gated_core_layers=config_sample.get("gated_core_layers", 1),
+                gated_exit_layers=config_sample.get("gated_exit_layers", 1),
+                gated_max_loops=config_sample.get("gated_max_loops", 10),
+                gated_min_loops=config_sample.get("gated_min_loops", 1),
+                gated_sample_depth_during_training=config_sample.get(
+                    "gated_sample_depth_during_training", True
+                ),
+                gated_state_noise_std=config_sample.get(
+                    "gated_state_noise_std", 0.1
+                ),
+                gated_gate_noise_std=config_sample.get(
+                    "gated_gate_noise_std", 0.1
+                ),
+                gated_gate_temperature=config_sample.get(
+                    "gated_gate_temperature", 1.0
+                ),
+                gated_gate_bias=config_sample.get("gated_gate_bias", 4.0),
+            )
+        elif config_sample.get("loopformer_shortcut_training", False):
+            model = LoopFormerModel(
+                encoder,
+                n_out,
+                config_sample["emsize"],
+                config_sample["nhead"],
+                nhid,
+                config_sample["nlayers"],
+                y_encoder=y_encoder_generator(1, config_sample["emsize"]),
+                dropout=config_sample["dropout"],
+                efficient_eval_masking=config_sample["efficient_eval_masking"],
+                full_attention=config_sample.get("enable_transformer_full_attn", False),
+                loopformer_core_layers=config_sample.get("loopformer_core_layers", 1),
+                loopformer_max_loops=config_sample.get("loopformer_max_loops", 12),
+                loopformer_frequency_embedding_size=config_sample.get(
+                    "loopformer_frequency_embedding_size", 256
+                ),
+            )
+        else:
+            model = LoopedTransformerModel(
+                encoder,
+                n_out,
+                config_sample['emsize'],
+                config_sample['nhead'],
+                nhid,
+                config_sample['nlayers'],
+                y_encoder=y_encoder_generator(1, config_sample['emsize']),
+                dropout=config_sample['dropout'],
+                efficient_eval_masking=config_sample['efficient_eval_masking'],
+                full_attention=config_sample.get('enable_transformer_full_attn', False),
+                looped_warmup_layers=config_sample.get('looped_warmup_layers', 1),
+                looped_core_layers=config_sample.get('looped_core_layers', 2),
+                looped_exit_layers=config_sample.get('looped_exit_layers', 1),
+                looped_core_repeat_pattern=config_sample.get('looped_core_repeat_pattern'),
             )
     elif model_name == "mamba":
         model = MambaModel(
@@ -419,7 +471,11 @@ def get_model(config,
                         "looped_core_layers": config.get("looped_core_layers", 2),
                         "looped_exit_layers": config.get("looped_exit_layers", 1),
                         "looped_core_repeat_pattern": config.get("looped_core_repeat_pattern"),
-                    } if model_type == "looped_transformer" else {})
+                    } if (
+                        model_type == "looped_transformer"
+                        and not config.get("gated_recurrent_transformer", False)
+                        and not config.get("loopformer_shortcut_training", False)
+                    ) else {})
             )
 
     #------------------------------------------------------------------------------------------------

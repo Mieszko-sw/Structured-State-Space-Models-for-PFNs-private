@@ -13,6 +13,8 @@ from torch import nn
 
 import tabpfn.utils as utils
 from tabpfn.transformer import TransformerModel
+from tabpfn.gated_recurrent_transformer import GatedRecurrentTransformerModel
+from tabpfn.loopformer import LoopFormerModel, sample_discrete_trajectory
 from tabpfn.looped_transformer import LoopedTransformerModel
 from tabpfn.utils import get_cosine_schedule_with_warmup, get_openai_lr, StoreDictKeyPair, get_weighted_single_eval_pos_sampler, get_uniform_single_eval_pos_sampler
 import tabpfn.priors as priors
@@ -28,6 +30,20 @@ from tabpfn.hybrid import HybridHydraTransformerModel
 from tabpfn.scripts import tabular_metrics
 import numpy as np
 
+_configured_train_seed = os.environ.get("TRAIN_SEED")
+_bootstrap_rng = (
+    np.random.RandomState(int(_configured_train_seed))
+    if _configured_train_seed is not None
+    else None
+)
+
+
+def _next_local_generator_seed():
+    """Draw reproducibly when TRAIN_SEED is set; preserve legacy behavior otherwise."""
+    if _bootstrap_rng is not None:
+        return int(_bootstrap_rng.randint(10_000_000))
+    return int(np.random.RandomState().randint(10_000_000))
+
 class Losses():
     gaussian = nn.GaussianNLLLoss(full=True, reduction='none')
     mse = nn.MSELoss(reduction='none')
@@ -39,8 +55,7 @@ class Losses():
 
 def sample_train(x, y, eval_position, bag_size):
     generator = torch.Generator()
-    rng = np.random.RandomState()
-    gen_seed = rng.randint(1e7)
+    gen_seed = _next_local_generator_seed()
     generator.manual_seed(gen_seed)
 
     n = int(eval_position)
@@ -85,8 +100,7 @@ def permute_data(data, targets, eval_position, device="cuda:0"):
     import numpy as np
 
     generator = torch.Generator()
-    rng = np.random.RandomState()
-    gen_seed = rng.randint(1e7)
+    gen_seed = _next_local_generator_seed()
     generator.manual_seed(gen_seed)
 
     # Onto the other device
@@ -192,6 +206,18 @@ def train(priordataloader_class,
     else:
         n_out = 1
 
+    loopformer_shortcut_training = bool(
+        config.get("loopformer_shortcut_training", False)
+    )
+    gated_recurrent_transformer = bool(
+        config.get("gated_recurrent_transformer", False)
+    )
+    if gated_recurrent_transformer and loopformer_shortcut_training:
+        raise ValueError(
+            "Enable only one of gated_recurrent_transformer and "
+            "loopformer_shortcut_training."
+        )
+
     if model_type == "transformer":
         model = TransformerModel(encoder, 
                                 n_out, 
@@ -211,23 +237,70 @@ def train(priordataloader_class,
                                 **model_extra_args
                                 )
     elif model_type == "looped_transformer":
-        model = LoopedTransformerModel(encoder,
-                                       n_out,
-                                       emsize,
-                                       nhead,
-                                       nhid,
-                                       nlayers,
-                                       dropout,
-                                       style_encoder=style_encoder,
-                                       y_encoder=y_encoder_generator(1, emsize),
-                                       input_normalization=input_normalization,
-                                       pos_encoder=(pos_encoder_generator or positional_encodings.NoPositionalEncoding)(emsize, bptt*2),
-                                       decoder=decoder,
-                                       init_method=initializer,
-                                       efficient_eval_masking=efficient_eval_masking,
-                                       full_attention=transformer_full_attn,
-                                       **model_extra_args
-                                       )
+        if gated_recurrent_transformer:
+            model_class = GatedRecurrentTransformerModel
+        elif loopformer_shortcut_training:
+            model_class = LoopFormerModel
+        else:
+            model_class = LoopedTransformerModel
+        recurrent_variant_args = (
+            {
+                "gated_warmup_layers": int(
+                    config.get("gated_warmup_layers", 1)
+                ),
+                "gated_core_layers": int(config.get("gated_core_layers", 1)),
+                "gated_exit_layers": int(config.get("gated_exit_layers", 1)),
+                "gated_max_loops": int(config.get("gated_max_loops", 10)),
+                "gated_min_loops": int(config.get("gated_min_loops", 1)),
+                "gated_sample_depth_during_training": bool(
+                    config.get("gated_sample_depth_during_training", True)
+                ),
+                "gated_state_noise_std": float(
+                    config.get("gated_state_noise_std", 0.1)
+                ),
+                "gated_gate_noise_std": float(
+                    config.get("gated_gate_noise_std", 0.1)
+                ),
+                "gated_gate_temperature": float(
+                    config.get("gated_gate_temperature", 1.0)
+                ),
+                "gated_gate_bias": float(config.get("gated_gate_bias", 4.0)),
+            }
+            if gated_recurrent_transformer
+            else
+            {
+                "loopformer_core_layers": int(
+                    config.get("loopformer_core_layers", 1)
+                ),
+                "loopformer_max_loops": int(
+                    config.get("loopformer_max_loops", nlayers)
+                ),
+                "loopformer_frequency_embedding_size": int(
+                    config.get("loopformer_frequency_embedding_size", 256)
+                ),
+            }
+            if loopformer_shortcut_training
+            else {}
+        )
+        model = model_class(
+            encoder,
+            n_out,
+            emsize,
+            nhead,
+            nhid,
+            nlayers,
+            dropout,
+            style_encoder=style_encoder,
+            y_encoder=y_encoder_generator(1, emsize),
+            input_normalization=input_normalization,
+            pos_encoder=(pos_encoder_generator or positional_encodings.NoPositionalEncoding)(emsize, bptt*2),
+            decoder=decoder,
+            init_method=initializer,
+            efficient_eval_masking=efficient_eval_masking,
+            full_attention=transformer_full_attn,
+            **recurrent_variant_args,
+            **model_extra_args,
+        )
     elif model_type == "mamba":
         model = MambaModel(
             encoder=encoder,
@@ -274,18 +347,60 @@ def train(priordataloader_class,
         
 
 
-    elastic_shortcut_training = bool(config.get("elastic_shortcut_training", False))
-    elastic_shortcut_min_loops = int(config.get("elastic_shortcut_min_loops", 1))
-    elastic_shortcut_ce_weight = float(config.get("elastic_shortcut_ce_weight", 0.1))
-    elastic_consistency_weight = float(config.get("elastic_consistency_weight", 0.1))
+    elastic_shortcut_training = bool(
+        config.get("elastic_shortcut_training", False)
+    )
+    if elastic_shortcut_training and loopformer_shortcut_training:
+        raise ValueError(
+            "Enable only one of elastic_shortcut_training and "
+            "loopformer_shortcut_training."
+        )
+    shortcut_training = elastic_shortcut_training or loopformer_shortcut_training
+    shortcut_min_loops = int(
+        config.get(
+            "loopformer_shortcut_min_loops"
+            if loopformer_shortcut_training
+            else "elastic_shortcut_min_loops",
+            1,
+        )
+    )
+    shortcut_ce_weight = float(
+        config.get(
+            "loopformer_shortcut_ce_weight"
+            if loopformer_shortcut_training
+            else "elastic_shortcut_ce_weight",
+            0.1,
+        )
+    )
+    consistency_weight = float(
+        config.get(
+            "loopformer_consistency_weight"
+            if loopformer_shortcut_training
+            else "elastic_consistency_weight",
+            0.1,
+        )
+    )
     elastic_distillation_temperature = float(
         config.get("elastic_distillation_temperature", 2.0)
     )
-    if elastic_shortcut_training:
+
+    if shortcut_training:
         if model_type != "looped_transformer":
-            raise ValueError("Elastic shortcut training requires model_type=looped_transformer.")
+            raise ValueError("Shortcut training requires model_type=looped_transformer.")
         if not isinstance(criterion, nn.CrossEntropyLoss):
-            raise ValueError("Elastic shortcut training currently supports classification only.")
+            raise ValueError("Shortcut training currently supports classification only.")
+        shortcut_max_loops = int(
+            config.get(
+                "loopformer_max_loops"
+                if loopformer_shortcut_training
+                else "elastic_max_loops",
+                nlayers,
+            )
+        )
+        if not 1 <= shortcut_min_loops < shortcut_max_loops:
+            raise ValueError("Expected 1 <= shortcut_min_loops < shortcut_max_loops.")
+
+    if elastic_shortcut_training:
         if (
             model.transformer_encoder.core_layers != 1
             and model.transformer_encoder.core_repeat_pattern is not None
@@ -295,19 +410,23 @@ def train(priordataloader_class,
                 "requires looped_core_repeat_pattern=None so num_loops repeats the "
                 "complete core stack."
             )
-        elastic_max_loops = int(config.get("elastic_max_loops", nlayers))
-        if not 1 <= elastic_shortcut_min_loops < elastic_max_loops:
-            raise ValueError(
-                "Expected 1 <= elastic_shortcut_min_loops < elastic_max_loops."
-            )
         if elastic_distillation_temperature <= 0:
             raise ValueError("elastic_distillation_temperature must be positive.")
         print(
             "Elastic shortcut training enabled: "
-            f"shortcut loops U[{elastic_shortcut_min_loops}, {elastic_max_loops - 1}], "
-            f"CE weight={elastic_shortcut_ce_weight}, "
-            f"KL weight={elastic_consistency_weight}, "
+            f"shortcut loops U[{shortcut_min_loops}, {shortcut_max_loops - 1}], "
+            f"CE weight={shortcut_ce_weight}, "
+            f"KL weight={consistency_weight}, "
             f"temperature={elastic_distillation_temperature}",
+            flush=True,
+        )
+    elif loopformer_shortcut_training:
+        print(
+            "Paper-faithful LoopFormer training enabled: "
+            f"shortcut loops U[{shortcut_min_loops}, {shortcut_max_loops - 1}], "
+            f"CE weight={shortcut_ce_weight}, "
+            f"hidden-state MSE weight={consistency_weight}, "
+            f"trajectory grid=1/{shortcut_max_loops}",
             flush=True,
         )
 
@@ -406,26 +525,53 @@ def train(priordataloader_class,
                             if isinstance(data, tuple)
                             else data.to(device)
                         )
-                        output = model(
-                            model_inputs,
-                            single_eval_pos=single_eval_pos,
-                            **({"num_loops": elastic_max_loops} if elastic_shortcut_training else {}),
-                        )
+                        full_hidden = None
+                        shortcut_hidden = None
+                        if loopformer_shortcut_training:
+                            full_trajectory = (1.0 / shortcut_max_loops,) * shortcut_max_loops
+                            output, full_hidden = model(
+                                model_inputs,
+                                single_eval_pos=single_eval_pos,
+                                trajectory=full_trajectory,
+                                return_hidden=True,
+                            )
+                        else:
+                            output = model(
+                                model_inputs,
+                                single_eval_pos=single_eval_pos,
+                                **(
+                                    {"num_loops": shortcut_max_loops}
+                                    if elastic_shortcut_training
+                                    else {}
+                                ),
+                            )
+
                         shortcut_loops = None
                         shortcut_output = None
-                        if elastic_shortcut_training:
+                        if shortcut_training:
                             shortcut_loops = int(
                                 torch.randint(
-                                    elastic_shortcut_min_loops,
-                                    elastic_max_loops,
+                                    shortcut_min_loops,
+                                    shortcut_max_loops,
                                     (),
                                 ).item()
                             )
-                            shortcut_output = model(
-                                model_inputs,
-                                single_eval_pos=single_eval_pos,
-                                num_loops=shortcut_loops,
-                            )
+                            if loopformer_shortcut_training:
+                                shortcut_trajectory = sample_discrete_trajectory(
+                                    shortcut_max_loops, shortcut_loops
+                                )
+                                shortcut_output, shortcut_hidden = model(
+                                    model_inputs,
+                                    single_eval_pos=single_eval_pos,
+                                    trajectory=shortcut_trajectory,
+                                    return_hidden=True,
+                                )
+                            else:
+                                shortcut_output = model(
+                                    model_inputs,
+                                    single_eval_pos=single_eval_pos,
+                                    num_loops=shortcut_loops,
+                                )
 
                         forward_time = time.time() - before_forward
                         if not torch.isfinite(output).all().item() or (
@@ -462,7 +608,7 @@ def train(priordataloader_class,
                         shortcut_loss = torch.zeros((), device=output.device)
                         consistency_loss = torch.zeros((), device=output.device)
                         loss = full_loss
-                        if elastic_shortcut_training:
+                        if shortcut_training:
                             shortcut_losses = criterion(
                                 shortcut_output.reshape(-1, n_out),
                                 targets.to(device).long().flatten(),
@@ -470,17 +616,28 @@ def train(priordataloader_class,
                             shortcut_loss, shortcut_nan_share = utils.torch_nanmean(
                                 shortcut_losses.mean(0), return_nanshare=True
                             )
-                            teacher_probs = torch.softmax(
-                                output.detach() / elastic_distillation_temperature, dim=-1
-                            )
-                            student_log_probs = torch.log_softmax(
-                                shortcut_output / elastic_distillation_temperature, dim=-1
-                            )
-                            consistency_losses = nn.functional.kl_div(
-                                student_log_probs,
-                                teacher_probs,
-                                reduction="none",
-                            ).sum(dim=-1) * (elastic_distillation_temperature ** 2)
+                            if loopformer_shortcut_training:
+                                consistency_losses = nn.functional.mse_loss(
+                                    shortcut_hidden,
+                                    full_hidden.detach(),
+                                    reduction="none",
+                                ).mean(dim=-1)
+                            else:
+                                teacher_probs = torch.softmax(
+                                    output.detach() / elastic_distillation_temperature,
+                                    dim=-1,
+                                )
+                                student_log_probs = torch.log_softmax(
+                                    shortcut_output / elastic_distillation_temperature,
+                                    dim=-1,
+                                )
+                                consistency_losses = nn.functional.kl_div(
+                                    student_log_probs,
+                                    teacher_probs,
+                                    reduction="none",
+                                ).sum(dim=-1) * (
+                                    elastic_distillation_temperature ** 2
+                                )
                             consistency_loss, consistency_nan_share = utils.torch_nanmean(
                                 consistency_losses.mean(0), return_nanshare=True
                             )
@@ -490,8 +647,8 @@ def train(priordataloader_class,
                             )
                             loss = (
                                 full_loss
-                                + elastic_shortcut_ce_weight * shortcut_loss
-                                + elastic_consistency_weight * consistency_loss
+                                + shortcut_ce_weight * shortcut_loss
+                                + consistency_weight * consistency_loss
                             )
                         raw_loss_value = loss.detach()
                         loss = loss / aggregate_k_gradients
@@ -538,7 +695,7 @@ def train(priordataloader_class,
                         total_loss += raw_loss_value.cpu().item()
                         valid_loss_steps += 1
                         total_full_loss += full_loss.detach().cpu().item()
-                        if elastic_shortcut_training:
+                        if shortcut_training:
                             total_shortcut_loss += shortcut_loss.detach().cpu().item()
                             total_consistency_loss += consistency_loss.detach().cpu().item()
                             total_shortcut_loops += shortcut_loops
@@ -566,12 +723,15 @@ def train(priordataloader_class,
                 )
 
         denom = max(valid_loss_steps, 1)
+        consistency_metric_name = (
+            "consistency_mse" if loopformer_shortcut_training else "consistency_kl"
+        )
         elastic_metrics = {
             "full_ce": total_full_loss / denom,
             "shortcut_ce": total_shortcut_loss / denom,
-            "consistency_kl": total_consistency_loss / denom,
+            consistency_metric_name: total_consistency_loss / denom,
             "mean_shortcut_loops": total_shortcut_loops / denom,
-        } if elastic_shortcut_training else {}
+        } if shortcut_training else {}
         return total_loss / denom, \
                 [], \
                 time_to_get_batch, \
