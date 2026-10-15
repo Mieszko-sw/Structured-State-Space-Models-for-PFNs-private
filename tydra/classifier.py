@@ -17,7 +17,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 
 
-DEFAULT_REPO_ID = "Mieszko-Komisarczyk/TabPFN-Tydra-4HT"
+DEFAULT_REPO_ID = "Mieszko-Komisarczyk/Tydra"
 
 
 class TydraClassifier(ClassifierMixin, BaseEstimator):

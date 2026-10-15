@@ -26,8 +26,8 @@ cuda = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Mieszko-sw/Structured-State-Space-Models-for-PFNs"
-Model = "https://huggingface.co/Mieszko-Komisarczyk/TabPFN-Tydra-4HT"
+Repository = "https://github.com/Mieszko-sw/Structured-State-Space-Models-for-PFNs-private"
+Model = "https://huggingface.co/Mieszko-Komisarczyk/Tydra"
 
 [tool.setuptools.packages.find]
 include = ["tydra*", "tabpfn*", "hydra*"]
