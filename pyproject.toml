@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tydra-tabpfn"
+version = "0.1.0"
+description = "Scikit-learn compatible inference wrapper for TabPFN-Tydra"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE.txt"}
+authors = [{name = "Mieszko Komisarczyk"}]
+dependencies = [
+  "einops>=0.6",
+  "huggingface-hub>=0.20",
+  "numpy>=1.21,<3",
+  "safetensors>=0.4",
+  "scikit-learn>=1.0,<2",
+  "torch>=2.2",
+]
+
+[project.optional-dependencies]
+cuda = [
+  "causal-conv1d>=1.4.0",
+  "mamba-ssm==2.2.2",
+]
+
+[project.urls]
+Repository = "https://github.com/Mieszko-sw/Structured-State-Space-Models-for-PFNs-private"
+Model = "https://huggingface.co/Mieszko-Komisarczyk/Tydra"
+
+[tool.setuptools.packages.find]
+include = ["tydra*", "tabpfn*", "hydra*"]
+exclude = ["tabpfn.tests*"]
